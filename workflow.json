@@ -1,0 +1,1180 @@
+{
+  "name": "AI Regional Lead Finder",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "9fd89c0e-bba6-46d8-a58b-1a3295101916",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "region",
+              "type": "string",
+              "value": "Trier, Germany"
+            },
+            {
+              "id": "2",
+              "name": "keyword",
+              "type": "string",
+              "value": "metalbauer"
+            },
+            {
+              "id": "3",
+              "name": "batchTarget",
+              "type": "number",
+              "value": 30
+            },
+            {
+              "id": "4",
+              "name": "scoreThreshold",
+              "type": "number",
+              "value": 60
+            },
+            {
+              "id": "5",
+              "name": "googleSheetId",
+              "type": "string",
+              "value": "YOUR_GOOGLE_SHEET_ID"
+            },
+            {
+              "id": "6",
+              "name": "googlePlacesApiKey",
+              "type": "string",
+              "value": "YOUR_GOOGLE_PLACES_API_KEY"
+            },
+            {
+              "id": "7",
+              "name": "ollamaUrl",
+              "type": "string",
+              "value": "http://host.docker.internal:11434"
+            },
+            {
+              "id": "8",
+              "name": "ollamaModel",
+              "type": "string",
+              "value": "llama3.1"
+            },
+            {
+              "id": "9",
+              "name": "senderName",
+              "type": "string",
+              "value": "YOUR_NAME"
+            },
+            {
+              "id": "10",
+              "name": "senderCompany",
+              "type": "string",
+              "value": "YOUR_COMPANY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "34259eb2-324e-4416-a607-806adc379023",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://maps.googleapis.com/maps/api/place/textsearch/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.keyword }} in {{ $json.region }}"
+            },
+            {
+              "name": "key",
+              "value": "={{ $json.googlePlacesApiKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "293552cf-7502-4018-9957-02a4c3192732",
+      "name": "Search Companies (Google Places)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -656,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Google Places results -> flat lead objects\nconst config = $('Config').first().json;\nconst results = $input.first().json.results || [];\n\nconst leads = results.map(r => ({\n  place_id: r.place_id,\n  name: r.name,\n  address: r.formatted_address || '',\n  lat: r.geometry?.location?.lat || null,\n  lng: r.geometry?.location?.lng || null,\n  website: null, // filled in later via Place Details if you extend this\n  googleSheetId: config.googleSheetId,\n  ollamaUrl: config.ollamaUrl,\n  ollamaModel: config.ollamaModel,\n  scoreThreshold: config.scoreThreshold,\n  batchTarget: config.batchTarget,\n  senderName: config.senderName,\n  senderCompany: config.senderCompany\n}));\n\nreturn leads.map(l => ({ json: l }));"
+      },
+      "id": "95a8a7b0-65f6-423d-b18b-b454f69de761",
+      "name": "Parse Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CompanyList",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "aa6edd5a-427f-4bb6-be95-ad346701ecbd",
+      "name": "Get Existing List",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -448,
+        448
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Cross-reference new leads against everything already logged (evaluated OR messaged)\nconst allLeads = $('Parse Search Results').all().map(i => i.json);\nconst existingRows = $input.all().map(i => i.json);\nconst existingIds = new Set(existingRows.map(r => r.place_id));\n\nconst fresh = allLeads.filter(l => !existingIds.has(l.place_id));\nconst target = fresh.slice(0, allLeads[0]?.batchTarget || 30);\n\nreturn target.map(l => ({ json: l }));"
+      },
+      "id": "e6e6d3f8-d411-476f-9faf-02ab49214e56",
+      "name": "Filter New Companies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        336
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "188f83ef-fdf2-46ce-87f2-e2713f38cd44",
+      "name": "Loop Companies",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -48,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-website-cond",
+              "leftValue": "={{ $json.website }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9339e207-647e-43ec-ae96-f1850c99f155",
+      "name": "Has Website?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "dc1a5ef4-2e64-4c20-9bb5-155243ed3a72",
+      "name": "Politeness Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        528,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "b734cf76-d543-4539-b992-0087ea7b8be2",
+      "name": "Scrape Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        224
+      ],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.data || $input.first().json.body || '';\n   const text = String(raw)\n     .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n     .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n     .replace(/<[^>]+>/g, ' ')\n     .replace(/\\s+/g, ' ')\n     .trim()\n     .slice(0, 3000);\n\n   const lead = $('Loop Companies').item.json;\n   return [{ json: { ...lead, siteText: text } }];"
+      },
+      "id": "40f84087-8bda-4964-ab43-8a69d4e68cfc",
+      "name": "Extract Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.ollamaUrl }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $('Config').first().json.ollamaModel,\n  prompt: `You are scoring whether a small/medium business is a good fit for AI-powered workflow automation and process consulting services (n8n automations, private DSGVO-compliant AI assistants).\\n\\nCompany: ${$json.name}\\nAddress: ${$json.address}\\nWebsite excerpt:\\n${$json.siteText}\\n\\nScore from 0-100 how likely this company would benefit from AND could afford automation/AI consulting. Consider: signs of manual/paper-based processes, outdated web presence, company size signals, industry (trades, logistics, local services score well; already-tech-native companies score lower).\\n\\nRespond ONLY with valid JSON: {\"score\": <number>, \"reasoning\": \"<one sentence>\"}`,\n  format: 'json',\n  stream: false\n}) }}",
+        "options": {}
+      },
+      "id": "9cf04bbb-c3cb-4577-a1db-05bfe1c9a671",
+      "name": "Score Lead (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Extract Text').first().json;\nlet parsed = { score: 0, reasoning: 'parse_failed' };\ntry {\n  const responseText = $input.first().json.response;\n  parsed = JSON.parse(responseText);\n} catch (e) {\n  // leave default on parse failure, gets logged with score 0 so it's visible in the sheet\n}\n\nreturn [{ json: { ...lead, score: Number(parsed.score) || 0, reasoning: parsed.reasoning || '' } }];"
+      },
+      "id": "b5b8f692-269a-4934-b227-2f7dbf3a3a07",
+      "name": "Parse Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CompanyList",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "56ca766e-7271-4db5-ab17-fa1b728136ef",
+      "name": "Log To Sheet (all evaluated)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1552,
+        224
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "score-cond",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $json.scoreThreshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "30f4a27d-5cdc-4287-9b47-b35b6cd16dd8",
+      "name": "Score >= Threshold?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CompanyList",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "place_id",
+              "lookupValue": "={{ $json.place_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f4cc8c74-44dd-497d-a641-f9c3e1665bbf",
+      "name": "Recheck Not Already Messaged",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1984,
+        112
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "not-messaged-cond",
+              "leftValue": "={{ $json.messaged }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1c6c06ef-a42d-4661-bb30-53ab14d49606",
+      "name": "Not Already Messaged?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.ollamaUrl }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n model: $('Config').first().json.ollamaModel,\n  prompt: `Write a short, non-salesy cold outreach email in German (formal 'Sie') from ${$('Parse Score').first().json.senderName} of ${$('Parse Score').first().json.senderCompany}, a solo IT automation and AI consultancy, to the company below. Reference something specific and plausible about their business (industry, likely manual processes) based on this context. Keep it under 120 words, one clear call to action (15-minute call), no hype language, no exclamation marks.\\n\\nCompany: ${$('Parse Score').first().json.name}\\nContext: ${$('Parse Score').first().json.reasoning}\\n\\nRespond ONLY with valid JSON: {\"subject\": \"<subject line>\", \"body\": \"<email body>\"}`,\n  format: 'json',\n  stream: false\n}) }}",
+        "options": {}
+      },
+      "id": "dccfb816-4b8b-4fec-bced-288988e42f2c",
+      "name": "Generate Cold Email (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2432,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Parse Score').first().json;\nlet email = { subject: 'Kurze Frage zu Ihren Abläufen', body: '' };\ntry {\n  email = JSON.parse($input.first().json.response);\n} catch (e) {}\n\nreturn [{ json: { ...lead, email_subject: email.subject, email_body: email.body } }];"
+      },
+      "id": "6eb73304-61a9-4fce-bf16-f24816253d0b",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CompanyList",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "email_body"
+          ],
+          "schema": [
+            {
+              "id": "place_id",
+              "displayName": "place_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "adress",
+              "displayName": "adress",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resoning",
+              "displayName": "resoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status ",
+              "displayName": "status ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "messaged",
+              "displayName": "messaged",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "evaluated_at",
+              "displayName": "evaluated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_subject",
+              "displayName": "email_subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_body",
+              "displayName": "email_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "address",
+              "displayName": "address",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lat",
+              "displayName": "lat",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lng",
+              "displayName": "lng",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "googleSheetId",
+              "displayName": "googleSheetId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ollamaUrl",
+              "displayName": "ollamaUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ollamaModel",
+              "displayName": "ollamaModel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scoreThreshold",
+              "displayName": "scoreThreshold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "batchTarget",
+              "displayName": "batchTarget",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "senderName",
+              "displayName": "senderName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "senderCompany",
+              "displayName": "senderCompany",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "siteText",
+              "displayName": "siteText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6529a388-72a9-42e8-bb1e-140e9bd2926c",
+      "name": "Save Draft (review before sending)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2864,
+        112
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "0214130f-e86c-4c9b-b7f2-cbcf4262858f",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/place/details/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "place_id",
+              "value": "={{ $('Loop Companies').item.json.place_id }}"
+            },
+            {
+              "name": "fields",
+              "value": "website"
+            },
+            {
+              "name": "key",
+              "value": "={{ $('Config').first().json.googlePlacesApiKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        368,
+        320
+      ],
+      "id": "cbe5a8d8-9387-43c6-9716-fb3acde1a60c",
+      "name": "Get Website (Place Details)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Loop Companies').item.json;\nconst website = $json.result?.website || null;\nreturn [{ json: { ...lead, website } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        352
+      ],
+      "id": "61e412d1-663a-4e3c-9eea-8ffbfc936058",
+      "name": "Add Website To Lead"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0b95335c-446d-4ca3-8e74-a7c1cdac8178",
+              "leftValue": "={{ $('Check Progress').all().length }}",
+              "rightValue": "=14",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        480
+      ],
+      "id": "ba01ad77-57e7-4567-b9a4-c1e09216a344",
+      "name": "Enough Drafts Ready?"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.googleSheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CompanyList",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status ",
+              "lookupValue": "ready_to_send"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        96,
+        448
+      ],
+      "id": "36bc6a25-674e-4e67-977d-5126e3c874de",
+      "name": "Check Progress",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Search Companies (Google Places)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Companies (Google Places)": {
+      "main": [
+        [
+          {
+            "node": "Parse Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Search Results": {
+      "main": [
+        [
+          {
+            "node": "Get Existing List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing List": {
+      "main": [
+        [
+          {
+            "node": "Filter New Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Companies": {
+      "main": [
+        [
+          {
+            "node": "Loop Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Companies": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Website?": {
+      "main": [
+        [
+          {
+            "node": "Politeness Delay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Politeness Delay": {
+      "main": [
+        [
+          {
+            "node": "Scrape Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Website": {
+      "main": [
+        [
+          {
+            "node": "Extract Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text": {
+      "main": [
+        [
+          {
+            "node": "Score Lead (Ollama)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Lead (Ollama)": {
+      "main": [
+        [
+          {
+            "node": "Parse Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Score": {
+      "main": [
+        [
+          {
+            "node": "Log To Sheet (all evaluated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log To Sheet (all evaluated)": {
+      "main": [
+        [
+          {
+            "node": "Score >= Threshold?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score >= Threshold?": {
+      "main": [
+        [
+          {
+            "node": "Recheck Not Already Messaged",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recheck Not Already Messaged": {
+      "main": [
+        [
+          {
+            "node": "Not Already Messaged?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Already Messaged?": {
+      "main": [
+        [
+          {
+            "node": "Generate Cold Email (Ollama)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Cold Email (Ollama)": {
+      "main": [
+        [
+          {
+            "node": "Format Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [
+          {
+            "node": "Save Draft (review before sending)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Draft (review before sending)": {
+      "main": [
+        [
+          {
+            "node": "Loop Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Website (Place Details)": {
+      "main": [
+        [
+          {
+            "node": "Add Website To Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Website To Lead": {
+      "main": [
+        [
+          {
+            "node": "Has Website?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Progress": {
+      "main": [
+        [
+          {
+            "node": "Enough Drafts Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enough Drafts Ready?": {
+      "main": [
+        [
+          {
+            "node": "Loop Companies",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Website (Place Details)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Europe/Berlin",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": []
+}
