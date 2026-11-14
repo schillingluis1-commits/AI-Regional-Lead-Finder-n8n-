@@ -70,4 +70,4 @@ n8n, Google Places API, Ollama (llama3.1), Google Sheets, Docker
 
 ---
 
-Built by [YOUR_NAME] ([YOUR_COMPANY]).
+Built by [Luis Schilling] (Lumi Automations.)
